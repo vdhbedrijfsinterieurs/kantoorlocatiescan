@@ -410,7 +410,15 @@ button:focus-visible,input:focus-visible,.pill:focus-visible{outline:2px solid #
       Direct advies
     </span>
   </div>
-  <button class="start-btn" onclick="startScan()">Start de scan →</button>
+  <form id="scan-contact" style="margin-top:28px" onsubmit="event.preventDefault(); startScan()">
+  <div class="cta-form-row">
+    <input class="cta-input" id="scan-naam" name="naam" aria-label="Naam" placeholder="Jouw naam" autocomplete="name" required>
+    <input class="cta-input" id="scan-email" name="email" aria-label="E-mailadres" placeholder="E-mailadres" type="email" autocomplete="email" required>
+  </div>
+  <div class="cta-form-row"><input class="cta-input" id="scan-bedrijf" name="bedrijf" aria-label="Bedrijfsnaam" placeholder="Bedrijfsnaam" autocomplete="organization" required></div>
+  <p style="font-size:14px;margin-top:12px">Bij afronding worden je contactgegevens, antwoorden en advies via Formspree naar Studio Van der Horst verstuurd. Een adviesgesprek vraag je afzonderlijk aan. <a href="https://studiovanderhorst.nl/privacy/" target="_blank" rel="noopener">Privacyverklaring</a></p>
+  <button class="start-btn" type="submit">Start de scan →</button>
+</form>
 </div>
 
 <!-- VRAGEN -->
@@ -439,7 +447,7 @@ button:focus-visible,input:focus-visible,.pill:focus-visible{outline:2px solid #
 <script>
 // ── FORMSPREE ──────────────────────────────────────────────────────────────────
 // Vervang meajzrlz door je eigen ID van formspree.io
-const FORMSPREE_ID = 'meajzrlz';
+const FORMSPREE_ID = 'moejzlpo';
 
 // ── HELPERS ────────────────────────────────────────────────────────────────────
 let employeeCount = '';
@@ -800,22 +808,6 @@ function showResult(){
 }
 
 // ── FORMSPREE ──────────────────────────────────────────────────────────────────
-function verstuurFormulier(aandachtLabels,goedLabels){
-  const naam=(document.getElementById('f-naam')?.value||'').trim();
-  const email=(document.getElementById('f-email')?.value||'').trim();
-  const bedrijf=(document.getElementById('f-bedrijf')?.value||'').trim();
-  if(!naam||!email){alert('Vul je naam en e-mailadres in om een gesprek aan te vragen.');return;}
-  const btn=document.getElementById('cta-btn');
-  btn.textContent='Bezig…';btn.disabled=true;
-  fetch('https://formspree.io/f/'+FORMSPREE_ID,{
-    method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},
-    body:JSON.stringify({naam,email,bedrijf,medewerkers:employeeCount||'niet ingevuld',aandachtspunten:aandachtLabels,goed_geregeld:goedLabels})
-  }).then(r=>{
-    if(r.ok){document.getElementById('form-area').style.display='none';document.getElementById('form-success').style.display='block';}
-    else{btn.textContent='Plan een gesprek';btn.disabled=false;alert('Er is iets misgegaan. Stuur een e-mail naar fred@studiovanderhorst.nl');}
-  }).catch(()=>{btn.textContent='Plan een gesprek';btn.disabled=false;alert('Er is iets misgegaan. Stuur een e-mail naar fred@studiovanderhorst.nl');});
-}
-
 function resetScan(){
   current=0;answers=new Array(questions.length).fill(null);employeeCount='';
   document.getElementById('result-section').innerHTML='';
@@ -826,6 +818,126 @@ function resetScan(){
   renderQuestion();
   window.scrollTo({top:0,behavior:'smooth'});
 }
+</script>
+<script>
+// Alleen verzending en contactgegevens; bestaande scanlogica blijft intact.
+const completionEndpoint = 'https://formspree.io/f/mgaobzng';
+const consultationEndpoint = 'https://formspree.io/f/moejzlpo';
+const sessionKey = 'svdh-locatiescan-delivery-v1';
+let delivery;
+try { delivery = JSON.parse(sessionStorage.getItem(sessionKey)); } catch (_) {}
+function newDelivery() {
+  return {id: crypto.randomUUID(), completion: 'idle', consultation: 'idle'};
+}
+if (!delivery || !delivery.id) delivery = newDelivery();
+function saveDelivery() {
+  try { sessionStorage.setItem(sessionKey, JSON.stringify(delivery)); } catch (_) {}
+}
+let contactDetails = null;
+let scanReport = null;
+const originalStartScan = startScan;
+startScan = function () {
+  const form = document.getElementById('scan-contact');
+  if (!form.reportValidity()) return;
+  contactDetails = {
+    naam: document.getElementById('scan-naam').value.trim(),
+    email: document.getElementById('scan-email').value.trim(),
+    bedrijf: document.getElementById('scan-bedrijf').value.trim()
+  };
+  if (!contactDetails.naam || !contactDetails.bedrijf) return;
+  originalStartScan();
+};
+async function sendScan(endpoint, payload) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST', headers: {'Content-Type':'application/json', Accept:'application/json'},
+      body: JSON.stringify(payload), signal: controller.signal
+    });
+    if (!response.ok) throw new Error('Formspree HTTP ' + response.status);
+  } finally { clearTimeout(timer); }
+}
+function buildScanReport() {
+  const result = document.getElementById('result-section').cloneNode(true);
+  result.querySelectorAll('.cta-block,.reset-row,button').forEach(el => el.remove());
+  // textContent includes the collapsed additional advice as well.
+  result.querySelectorAll('p,li,h2,h3,div').forEach(el => el.append('\n'));
+  const cards = [...document.querySelectorAll('#result-section .aandacht-card')];
+  const steps = cards.map(card => ({
+    onderwerp: card.querySelector('.aandacht-tag').textContent,
+    stappen: [...card.querySelectorAll('.advice-list:first-of-type li')].map(el => el.textContent)
+  }));
+  const disciplines = [...document.querySelectorAll('#result-section .vakgebied-card')].map(el => ({
+    discipline: el.querySelector('.vakgebied-title').textContent,
+    partij: el.querySelector('.vakgebied-partij').textContent,
+    aandachtspunten: [...el.querySelectorAll('li')].map(li => li.textContent)
+  }));
+  return {
+    scansessie: delivery.id, afgerond_op: new Date().toISOString(),
+    medewerkers: employeeCount || 'Niet ingevuld',
+    vragen_en_antwoorden: questions.map((q,i) => ({
+      vraag: q.q, toelichting: q.clarify || q.sub || '',
+      antwoorden: (Array.isArray(answers[i]) ? answers[i] : [answers[i]]).map(a => q.opts[a]?.t || 'Niet ingevuld')
+    })),
+    volledig_persoonlijk_advies: result.textContent.trim(),
+    aanbevolen_eerste_stappen: steps,
+    geadviseerde_disciplines: disciplines
+  };
+}
+const originalShowResult = showResult;
+showResult = function () {
+  originalShowResult(); // Always show advice before attempting delivery.
+  scanReport = buildScanReport();
+  if (contactDetails) {
+    document.getElementById('f-naam').value = contactDetails.naam;
+    document.getElementById('f-email').value = contactDetails.email;
+    document.getElementById('f-bedrijf').value = contactDetails.bedrijf;
+  }
+  if (delivery.consultation !== 'idle') {
+    document.getElementById('cta-btn').disabled = true;
+    document.getElementById('cta-btn').textContent = delivery.consultation === 'sent' ? 'Aanvraag verstuurd' : 'Aanvraag al verwerkt of verzending onzeker';
+  }
+  if (!contactDetails || answers.some(a => a == null) || delivery.completion !== 'idle') return;
+  const state = delivery;
+  state.completion = 'attempted'; saveDelivery();
+  sendScan(completionEndpoint, {
+    _subject: 'Kantoorlocatiescan afgerond', type: 'Afronding',
+    ...contactDetails, ...scanReport
+  }).then(() => { state.completion = 'sent'; if (delivery === state) saveDelivery(); })
+    .catch(() => { state.completion = 'failed'; if (delivery === state) saveDelivery(); console.warn('Afrondingsmelding niet bevestigd; advies blijft beschikbaar. Geen automatische herverzending.'); });
+};
+function verstuurFormulier() {
+  if (delivery.consultation !== 'idle' || !scanReport) return;
+  const naam = document.getElementById('f-naam').value.trim();
+  const emailField = document.getElementById('f-email');
+  emailField.required = true;
+  if (!naam || !emailField.reportValidity()) return;
+  const bedrijf = document.getElementById('f-bedrijf').value.trim();
+  const state = delivery;
+  state.consultation = 'attempted'; saveDelivery();
+  const btn = document.getElementById('cta-btn');
+  btn.disabled = true; btn.textContent = 'Bezig…';
+  sendScan(consultationEndpoint, {
+    _subject: 'Gratis adviesgesprek — Kantoorlocatiescan', type: 'Adviesgesprek',
+    naam, email: emailField.value.trim(), bedrijf,
+    aangevraagd_op: new Date().toISOString(), ...scanReport
+  }).then(() => {
+    state.consultation = 'sent'; if (delivery !== state) return; saveDelivery();
+    document.getElementById('form-area').style.display = 'none';
+    document.getElementById('form-success').style.display = 'block';
+  }).catch(() => {
+    state.consultation = 'failed'; if (delivery !== state) return; saveDelivery();
+    btn.textContent = 'Verzending niet bevestigd';
+    alert('We konden de verzending niet bevestigen. Om dubbele aanvragen te voorkomen versturen we niet opnieuw. Neem contact op via fred@studiovanderhorst.nl. Je scanadvies blijft beschikbaar.');
+  });
+}
+const originalResetScan = resetScan;
+resetScan = function () {
+  delivery = newDelivery(); saveDelivery(); scanReport = null;
+  originalResetScan();
+};
+
 </script>
 </body>
 </html>
